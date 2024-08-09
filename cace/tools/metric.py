@@ -66,8 +66,8 @@ class Metrics(nn.Module):
                 target: Optional[Dict[str, torch.Tensor]] = None,
                ):
         
-        print(pred.keys())
-        print(self.predict_name, self.target_name)
+        # print(pred.keys())
+        # print(self.predict_name, self.target_name)
 
         pred_tensor = pred[self.predict_name].clone().detach()
         if self.output_index is not None:

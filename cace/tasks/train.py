@@ -3,6 +3,7 @@ import logging
 import torch
 from torch import nn
 import numpy as np
+import time
 from .loss import GetLoss
 from ..tools import Metrics
 from ..tools import to_numpy, tensor_dict_to_device
@@ -219,15 +220,19 @@ class TrainingTask(nn.Module):
 
             # train
             total_loss = 0
+            count_batches = 0
             if subset_ratio < 1.0:
                 train_loader = self._get_subset_batches(train_loader, subset_ratio)
-            for batch in train_loader:                
+            for ii, batch in enumerate(train_loader):                
                 if subsample_loss_mode is not None:
                     loss_index = np.random.choice(len(self.losses), subsample_loss_mode)
                     loss = self.train_step(batch, screen_nan=screen_nan, loss_index=loss_index, output_index=output_index)
                 else:
                     loss = self.train_step(batch, screen_nan=screen_nan, loss_index=None, output_index=output_index)
                 total_loss += loss
+
+                print("Batch: {}/{}, Avg_loss: {}".format(ii+1, len(train_loader), total_loss/(ii+1))) 
+                
             avg_loss = total_loss / len(train_loader)
 
             if epoch == 1:
