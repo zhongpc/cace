@@ -22,6 +22,7 @@ def load_data_loader(
     collection: SubsetAtoms,
     data_type: str, # ['train', 'valid', 'test']
     batch_size: int,
+    pin_memory: bool = True,
 ):
 
     allowed_types = ['train', 'valid', 'test']
@@ -42,6 +43,7 @@ def load_data_loader(
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
+            pin_memory= pin_memory,
         )
     elif data_type == 'valid':
         loader = torch_geometric.DataLoader(
@@ -52,6 +54,7 @@ def load_data_loader(
             batch_size=batch_size,
             shuffle=False,
             drop_last=False,
+            pin_memory= pin_memory,
         )
     elif data_type == 'test':
         loader = torch_geometric.DataLoader(
@@ -62,6 +65,7 @@ def load_data_loader(
             batch_size=batch_size,
             shuffle=False,
             drop_last=False,
+            pin_memory= pin_memory,
         )
     return loader
 
@@ -113,7 +117,18 @@ def get_dataset_from_xyz(
 def random_train_valid_split(
     items: Sequence, valid_fraction: float, seed: int
 ) -> Tuple[List, List]:
-    assert 0.0 < valid_fraction < 1.0
+    assert 0.0 <= valid_fraction <= 1.0
+
+    if valid_fraction == 0.0:
+        return (
+            items,
+            [],
+        )
+    elif valid_fraction == 1.0:
+        return (
+            [],
+            items,
+        )
 
     size = len(items)
     train_size = size - int(valid_fraction * size)

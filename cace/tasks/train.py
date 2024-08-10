@@ -7,12 +7,18 @@ import time
 from .loss import GetLoss
 from ..tools import Metrics
 from ..tools import to_numpy, tensor_dict_to_device
+import datetime
+import os
 
 """
 This file contains the training loop for the neural network model.
 """
 
 __all__ = ['TrainingTask']
+
+def mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
 class TrainingTask(nn.Module):
     def __init__(self, 
@@ -240,6 +246,9 @@ class TrainingTask(nn.Module):
 
         best_val_loss = float('inf')
 
+        current_date = datetime.date.today().strftime("%Y-%m-%d")
+        mkdir(current_date)
+
         for epoch in range(1, epochs + 1):
 
             # start SWA if needed
@@ -314,6 +323,9 @@ class TrainingTask(nn.Module):
 
             if epoch > val_stride and val_loss < best_val_loss:
                 best_val_loss = val_loss
+                bestmodel_path = os.path.join(current_date, "epoch_" + str(epoch) + "_bestModel.pth")
+
+                
                 self.save_model(bestmodel_path, device=self.device)
 
             if checkpoint_path is not None and epoch % checkpoint_stride == 0:
