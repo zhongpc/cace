@@ -168,11 +168,7 @@ class TrainingTask(nn.Module):
         self.log_metrics('train', pred, batch_dict)
 
         loss_dict = self.loss_fn(pred, batch_dict, {'epochs': self.global_step, 'training': True}, loss_index)
-
-        # print("loss_dict: ", loss_dict)
-
         loss = sum([loss_dict[i] for i in loss_dict])
-
         loss.backward()
 
         # Print gradients for debugging purposes
@@ -281,8 +277,14 @@ class TrainingTask(nn.Module):
                 model_size = sum(p.numel() for p in self.model.parameters())
                 print("The model with {} parameters are being trained. ".format(model_size))
 
+            # if self.swa and self.global_step >= self.swa_start:
+            #    self.swa_model.update_parameters(self.model)
+
             if self.swa and self.global_step >= self.swa_start:
-               self.swa_model.update_parameters(self.model)
+                for (name, p_swa), (_, p_model) in zip(self.swa_model.module.named_parameters(), self.model.named_parameters()):
+                    if p_swa.shape != p_model.shape:
+                        print(f"Mismatch in parameter {name}: SWA shape {p_swa.shape}, Model shape {p_model.shape}")
+                self.swa_model.update_parameters(self.model)
 
             # validate
             if print_stride > 0 and self.global_step % print_stride == 0:
