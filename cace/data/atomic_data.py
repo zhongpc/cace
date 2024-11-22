@@ -153,6 +153,7 @@ class AtomicData(torch_geometric.data.Data):
                 forces = atoms.get_forces()
             else:
                 forces = None
+        
         molecular_index = atoms.arrays.get(data_key["molecular_index"], None) # index of molecules
         stress = atoms.info.get(data_key["stress"], None)  # eV / Ang
         virials = atoms.info.get(data_key["virials"], None)
@@ -212,6 +213,9 @@ class AtomicData(torch_geometric.data.Data):
                     else None
                 )
             additional_info[key] = more_info
+
+        # print(additional_info)
+
 
         return cls(
             edge_index=torch.tensor(edge_index, dtype=torch.long),

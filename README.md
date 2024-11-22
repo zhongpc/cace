@@ -8,7 +8,7 @@ The Cartesian Atomic Cluster Expansion (CACE) is a new approach for developing m
 
 - Python 3.6 or higher
 - NumPy
-- ASE (Atomic Simulation Environment)
+- ASE (Atomic Simulation Environment) <=3.22.1
 - PyTorch
 - matscipy
 

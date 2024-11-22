@@ -3,15 +3,22 @@ import logging
 import torch
 from torch import nn
 import numpy as np
+import time
 from .loss import GetLoss
 from ..tools import Metrics
 from ..tools import to_numpy, tensor_dict_to_device
+import datetime
+import os
 
 """
 This file contains the training loop for the neural network model.
 """
 
 __all__ = ['TrainingTask']
+
+def mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
 class TrainingTask(nn.Module):
     def __init__(self, 
@@ -88,6 +95,8 @@ class TrainingTask(nn.Module):
 
         self.grad_enabled = len(self.model.required_derivatives) > 0
 
+        print("Number of model_parameters: ", sum(p.numel() for p in self.model.parameters()))
+
     def update_loss(self, losses: List[GetLoss]):
         self.losses = nn.ModuleList(losses)
 
@@ -97,15 +106,39 @@ class TrainingTask(nn.Module):
     def forward(self, data, training: bool):
         return self.model(data, training=training)
 
-    def loss_fn(self, pred, batch, loss_args: Optional[Dict[str, torch.Tensor]] = None, index: Optional[List[int]] = None):
+    def loss_fn(self, pred, batch, 
+                loss_args: Optional[Dict[str, torch.Tensor]] = None, 
+                index: Optional[List[int]] = None,
+                per_atom: bool = False):
+        """
+        Compute the loss function
+        per_atom: whether to calculate the energy loss per atom
+        """
         loss = 0.0
+        loss_dict = {}
+
+        # print("loss_args", loss_args)
         if index is not None:
             for i in index:
-                loss += self.losses[i](pred, batch, loss_args)
+                if i == 0:
+                    # print("compute energy loss")
+                    loss = self.losses[i](pred, batch, loss_args, per_atom = True)
+                    loss_dict.update({i: loss})
+                else: 
+                    # print("compute other loss")
+                    loss = self.losses[i](pred, batch, loss_args)
+                    loss_dict.update({ii: loss})
         else:
-            for eachloss in self.losses:
-                loss += eachloss(pred, batch, loss_args)
-        return loss
+            for ii, eachloss in enumerate(self.losses):
+                if ii == 0:
+                    # print("compute energy loss")
+                    loss = eachloss(pred, batch, loss_args, per_atom = True)
+                    loss_dict.update({ii: loss})
+                else:
+                    # print("compute other loss")
+                    loss = eachloss(pred, batch, loss_args)
+                    loss_dict.update({ii: loss}) #  [ii] = loss
+        return loss_dict
 
     def log_metrics(self, subset, pred, batch):
         for metric in self.metrics:
@@ -113,7 +146,8 @@ class TrainingTask(nn.Module):
 
     def retrieve_metrics(self, subset, print_log: bool = False):
         for metric in self.metrics:
-            metric.retrieve_metrics(subset, print_log=print_log)
+            metric_now = metric.retrieve_metrics(subset, print_log=print_log)
+            # print(metric_now)
 
     def train_step(self, 
                    batch, 
@@ -126,12 +160,21 @@ class TrainingTask(nn.Module):
         batch.to(self.device)
         batch_dict = batch.to_dict()
 
+        # print(batch_dict.keys())
+        # n_atoms = torch.bincount(batch['batch']).clone().detach()
+
+        # print("number of atoms per batch: ", n_atoms)
+        # print("Total energy per batch: ", batch_dict['energy'])
+
+
         self.train()
         self.optimizer.zero_grad()
         pred = self.model(batch_dict, training=True, output_index=output_index)
+                
         self.log_metrics('train', pred, batch_dict)
 
-        loss = self.loss_fn(pred, batch_dict, {'epochs': self.global_step, 'training': True}, loss_index)
+        loss_dict = self.loss_fn(pred, batch_dict, {'epochs': self.global_step, 'training': True}, loss_index)
+        loss = sum([loss_dict[i] for i in loss_dict])
         loss.backward()
 
         # Print gradients for debugging purposes
@@ -160,7 +203,9 @@ class TrainingTask(nn.Module):
             if self.ema and self.global_step >= self.ema_start:
                 self.ema_model.update_parameters(self.model)
 
-        return to_numpy(loss).item()
+        loss_numpy_each = np.array([to_numpy(loss_dict[i]).item() for i in loss_dict])
+
+        return to_numpy(loss).item(), loss_numpy_each
 
     def validate(self, val_loader, output_index: Optional[int] = None):
         torch.set_grad_enabled(self.grad_enabled)
@@ -175,7 +220,9 @@ class TrainingTask(nn.Module):
             else:
                 pred = self.model(batch_dict, training=False, output_index=output_index)
 
-            loss = to_numpy(self.loss_fn(pred, batch_dict, {'epochs': self.global_step, 'training': False}))
+
+            loss_dict = self.loss_fn(pred, batch_dict, {'epochs': self.global_step, 'training': False})
+            loss = to_numpy(sum([loss_dict[i] for i in loss_dict]))
             total_loss += loss.item()
             self.log_metrics('val', pred, batch_dict)
 
@@ -194,9 +241,13 @@ class TrainingTask(nn.Module):
             subset_ratio: float = 1.0,
             output_index: Optional[int] = None, # output index for multi-output models
             subsample_loss_mode: Optional[int] = None,
+            verbose: int = 1, # 0: no print, 1 and above: print loss every verbose
            ):
 
         best_val_loss = float('inf')
+
+        current_date = datetime.date.today().strftime("%Y-%m-%d")
+        mkdir(current_date)
 
         for epoch in range(1, epochs + 1):
 
@@ -214,19 +265,35 @@ class TrainingTask(nn.Module):
 
             # train
             total_loss = 0
+            total_loss_numpy_each = 0
             if subset_ratio < 1.0:
                 train_loader = self._get_subset_batches(train_loader, subset_ratio)
-            for batch in train_loader:
+            for ii, batch in enumerate(train_loader):                
                 if subsample_loss_mode is not None:
                     loss_index = np.random.choice(len(self.losses), subsample_loss_mode)
-                    loss = self.train_step(batch, screen_nan=screen_nan, loss_index=loss_index, output_index=output_index)
+                    loss, loss_numpy_each = self.train_step(batch, screen_nan=screen_nan, loss_index=loss_index, output_index=output_index)
                 else:
-                    loss = self.train_step(batch, screen_nan=screen_nan, loss_index=None, output_index=output_index)
+                    loss, loss_numpy_each = self.train_step(batch, screen_nan=screen_nan, loss_index=None, output_index=output_index)
                 total_loss += loss
+                total_loss_numpy_each += loss_numpy_each
+
+                if (verbose > 0) and (ii % verbose == 0):
+                    print("Batch: {}/{}, ".format(ii+1, len(train_loader)) + " ".join([f"Loss {i}: {loss_value/(ii+1):.4f}, " for i, loss_value in enumerate(total_loss_numpy_each)]))
+
             avg_loss = total_loss / len(train_loader)
 
+            if epoch == 1:
+                model_size = sum(p.numel() for p in self.model.parameters())
+                print("The model with {} parameters are being trained. ".format(model_size))
+
+            # if self.swa and self.global_step >= self.swa_start:
+            #    self.swa_model.update_parameters(self.model)
+
             if self.swa and self.global_step >= self.swa_start:
-               self.swa_model.update_parameters(self.model)
+                for (name, p_swa), (_, p_model) in zip(self.swa_model.module.named_parameters(), self.model.named_parameters()):
+                    if p_swa.shape != p_model.shape:
+                        print(f"Mismatch in parameter {name}: SWA shape {p_swa.shape}, Model shape {p_model.shape}")
+                self.swa_model.update_parameters(self.model)
 
             # validate
             if print_stride > 0 and self.global_step % print_stride == 0:
@@ -256,6 +323,9 @@ class TrainingTask(nn.Module):
 
             if epoch > val_stride and val_loss < best_val_loss:
                 best_val_loss = val_loss
+                bestmodel_path = os.path.join(current_date, "epoch_" + str(epoch) + "_bestModel.pth")
+
+                
                 self.save_model(bestmodel_path, device=self.device)
 
             if checkpoint_path is not None and epoch % checkpoint_stride == 0:

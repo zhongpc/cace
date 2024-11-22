@@ -40,8 +40,9 @@ class GetLoss(nn.Module):
 
     def forward(self, 
                 pred: Dict[str, torch.Tensor], 
-                target: Optional[Dict[str, torch.Tensor]] = None,
-                loss_args: Optional[Dict[str, torch.Tensor]] = None
+                target: Optional[Dict[str, torch.Tensor]] = None,  # target is a batch dictionary
+                loss_args: Optional[Dict[str, torch.Tensor]] = None,
+                per_atom: bool = False,
                 ):
         if self.loss_weight == 0 or self.loss_fn is None:
             return 0.0
@@ -54,19 +55,69 @@ class GetLoss(nn.Module):
         else: 
             loss_weight = self.loss_weight
 
-        if target is not None:
-            loss = loss_weight * self.loss_fn(
-                pred[self.predict_name] if self.output_index is None else pred[self.predict_name][..., self.output_index], 
-                target[self.target_name]
-            )
-        elif self.predict_name != self.target_name:
-            loss = loss_weight * self.loss_fn(
-                pred[self.predict_name] if self.output_index is None else pred[self.predict_name][..., self.output_index], 	
-                pred[self.target_name]
-            )
+        if per_atom:
+            n_atoms = torch.bincount(target['batch']).clone().detach()
+
+            if target is not None:
+                loss = loss_weight * self.loss_fn(
+                    pred[self.predict_name] / n_atoms if self.output_index is None else pred[self.predict_name][..., self.output_index] / n_atoms, 
+                    target[self.target_name] / n_atoms
+                )
+
+                # print("!!!!!! Number of atoms: ", n_atoms)
+                # print("!!!!!! Predictions: ", pred[self.predict_name])
+                # print("!!!!!! Targets: ", target[self.target_name])
+
+                # print("!!!!!! Predictions / atom: ", pred[self.predict_name] / n_atoms)
+                # print("!!!!!! Targets /atom : ", target[self.target_name] / n_atoms)
+
+                
+            elif self.predict_name != self.target_name:
+                loss = loss_weight * self.loss_fn(
+                    pred[self.predict_name] / n_atoms if self.output_index is None else pred[self.predict_name][..., self.output_index] / n_atoms, 	
+                    pred[self.target_name] / n_atoms
+                )
+                # print("!!!!!! Number of atoms: ", n_atoms)
+                # print("!!!!!! Predictions: ", pred[self.predict_name])
+                # print("!!!!!! Targets: ", target[self.target_name])
+
+                # print("!!!!!! Predictions / atom: ", pred[self.predict_name] / n_atoms)
+                # print("!!!!!! Targets /atom : ", target[self.target_name] / n_atoms)
+                
+            else:
+                raise ValueError("Target is None and predict_name is not equal to target_name")
+            
+            return loss
+        
         else:
-            raise ValueError("Target is None and predict_name is not equal to target_name")
-        return loss
+            if target is not None:
+                loss = loss_weight * self.loss_fn(
+                    pred[self.predict_name] if self.output_index is None else pred[self.predict_name][..., self.output_index], 
+                    target[self.target_name]
+                )
+            elif self.predict_name != self.target_name:
+                loss = loss_weight * self.loss_fn(
+                    pred[self.predict_name] if self.output_index is None else pred[self.predict_name][..., self.output_index], 	
+                    pred[self.target_name]
+                )
+            else:
+                raise ValueError("Target is None and predict_name is not equal to target_name")
+            
+            return loss
+
+        # if target is not None:
+        #     loss = loss_weight * self.loss_fn(
+        #         pred[self.predict_name] / n_atoms if self.output_index is None else pred[self.predict_name][..., self.output_index], 
+        #         target[self.target_name] / n_atoms
+        #     )
+        # elif self.predict_name != self.target_name:
+        #     loss = loss_weight * self.loss_fn(
+        #         pred[self.predict_name] / n_atoms if self.output_index is None else pred[self.predict_name][..., self.output_index], 	
+        #         pred[self.target_name] / n_atoms
+        #     )
+        # else:
+        #     raise ValueError("Target is None and predict_name is not equal to target_name")
+        # return loss
 
     def __repr__(self):
         return (
